@@ -15,6 +15,11 @@ vault_path: ~/Documents/notes
 # command and by hugin-meetings' tray menu.
 journal_path: ~/Documents/notes/journal/journal.md
 
+# Subdirectory used for rotated journal archives, sibling to journal.md.
+# Defaults to "archive" (en) / "arkiv" (sv) — picked from `language` above.
+# Uncomment to override.
+# archive_dirname: archive
+
 # Google Workspace CLI used for calendar access. Install separately.
 gws_bin: gws
 # gws_config_dir: ~/.config/gws
