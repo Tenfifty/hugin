@@ -1,0 +1,20 @@
+# ~/.config/hugin/hugin.yaml  (shared across all hugin-* tools)
+# ----------------------------------------------------------------
+# Each hugin-* tool also reads its own <tool>.yaml next to this file.
+# Tool-specific values override these. Override the config dir with
+# HUGIN_CONFIG_DIR=/path.
+
+language: en                  # en | sv
+user_name: "Your Name"
+
+# Root of your Obsidian / notes vault. Tools write transcripts, summaries,
+# and journal entries inside here.
+vault_path: ~/Documents/notes
+
+# Daily journal file (inside the vault). Used by hugin-agenda's rotate
+# command and by hugin-meetings' tray menu.
+journal_path: ~/Documents/notes/journal/journal.md
+
+# Google Workspace CLI used for calendar access. Install separately.
+gws_bin: gws
+# gws_config_dir: ~/.config/gws
