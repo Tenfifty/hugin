@@ -5,6 +5,8 @@ read from your calendar, email, meeting recordings, and notes vault, and write
 back useful synthesis. The pieces are independently installable; this
 repository is the **shared library and conventions** they all build on.
 
+All text is stored in markdown and interacts especially well with Obsidian.
+
 ## The stack
 
 | Repo | What it does |
