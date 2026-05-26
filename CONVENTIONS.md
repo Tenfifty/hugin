@@ -42,7 +42,7 @@ the user override.
   meetings/
     transcripts/
     summaries/
-  projects/                     # one .md per project / customer
+  projects/                     # one .md per project / account / client
   agenda_templates/             # optional user override of packaged templates
 ```
 
@@ -101,8 +101,8 @@ Tools that ship LLM prompt templates use this naming convention:
   shared ``language`` field matches.
 
 A user-supplied explicit path in config (e.g. ``summarize_prompt_path``)
-overrides both. Use :func:`hugin.prompts.resolve_prompt` to get the
-right file for the active language.
+overrides both. Use `hugin.prompts.resolve_prompt` to get the right file for
+the active language.
 
 Files suffixed ``.example.md`` (e.g. ``summary_sv_personal.example.md``)
 are starter templates — never auto-picked. They exist for users to copy

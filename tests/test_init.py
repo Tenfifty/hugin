@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 from hugin.init import Answers, _plan, _render_hugin_yaml, _vault_subdirs, main
 
 
@@ -28,10 +30,18 @@ class RenderTests(unittest.TestCase):
             vault=Path("/v"), language="sv", user_name="Alice", scaffold_vault=True
         )
         rendered = _render_hugin_yaml(a)
-        self.assertIn("language: sv", rendered)
-        self.assertIn('user_name: "Alice"', rendered)
-        self.assertIn("vault_path: /v", rendered)
-        self.assertIn("journal_path: /v/journal/journal.md", rendered)
+        parsed = yaml.safe_load(rendered)
+        self.assertEqual(parsed["language"], "sv")
+        self.assertEqual(parsed["user_name"], "Alice")
+        self.assertEqual(parsed["vault_path"], "/v")
+        self.assertEqual(parsed["journal_path"], "/v/journal/journal.md")
+
+    def test_yaml_escapes_user_name(self) -> None:
+        a = Answers(
+            vault=Path("/v"), language="en", user_name='Alice "A"', scaffold_vault=True
+        )
+        parsed = yaml.safe_load(_render_hugin_yaml(a))
+        self.assertEqual(parsed["user_name"], 'Alice "A"')
 
 
 class PlanTests(unittest.TestCase):

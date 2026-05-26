@@ -47,6 +47,8 @@ deep-merges them (tool wins), expands `~`/env vars, and hands the result to
 your builder.
 
 ```python
+from dataclasses import dataclass
+
 from hugin.config import SharedConfig, load_tool
 
 @dataclass
@@ -73,5 +75,5 @@ supported languages, LLM provider naming.
 
 ## Status
 
-Early. The shared config boundary is stable; the LLM runner is lifted from
-hugin-meetings and still bears its fingerprints. MIT licensed.
+Early. The shared config boundary is stable; the LLM runner is intentionally
+small and wraps Codex, Claude, Gemini, or a local command. MIT licensed.
