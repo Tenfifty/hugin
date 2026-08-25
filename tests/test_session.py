@@ -214,3 +214,52 @@ class ExtraDirTests(unittest.TestCase):
             s = parse_spec("claude", Path(tmp), extra_dirs=[Path("/a")])
             revived = Session.from_dict(json.loads(json.dumps(s.to_dict())))
         self.assertEqual(revived.extra_dirs, [Path("/a")])
+
+
+class UsageTrackingTests(unittest.TestCase):
+    def test_claude_context_window_comes_from_model_usage(self) -> None:
+        payload = json.loads(CLAUDE_OUT)
+        payload["modelUsage"] = {"claude-fable-5": {"contextWindow": 1_000_000}}
+        with tempfile.TemporaryDirectory() as tmp:
+            s = parse_spec("claude", Path(tmp))
+            with patch(
+                "hugin.session.subprocess.run",
+                return_value=Completed(json.dumps(payload)),
+            ):
+                turn = s.send("hi")
+        self.assertEqual(turn.usage.context_window, 1_000_000)
+        self.assertEqual(turn.usage.context_tokens, 632 + 26665)
+
+    def test_a_provider_that_does_not_say_leaves_the_window_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            s = parse_spec("codex", Path(tmp))
+            with patch("hugin.session.subprocess.run", return_value=Completed(CODEX_OUT)):
+                turn = s.send("hi")
+        self.assertIsNone(turn.usage.context_window)
+
+    def test_last_usage_and_cost_accumulate_and_survive_a_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            s = parse_spec("claude", Path(tmp))
+            with patch(
+                "hugin.session.subprocess.run", return_value=Completed(CLAUDE_OUT)
+            ):
+                s.send("one")
+                s.send("two")
+            revived = Session.from_dict(json.loads(json.dumps(s.to_dict())))
+        self.assertAlmostEqual(s.total_cost_usd, 0.5)
+        self.assertAlmostEqual(revived.total_cost_usd, 0.5)
+        self.assertEqual(revived.last_usage.cached_input_tokens, 26665)
+
+    def test_a_failed_turn_leaves_usage_untouched(self) -> None:
+        class Failed:
+            returncode = 1
+            stdout = ""
+            stderr = "boom"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            s = parse_spec("claude", Path(tmp))
+            with patch("hugin.session.subprocess.run", return_value=Failed()):
+                with self.assertRaises(SessionError):
+                    s.send("hi")
+        self.assertIsNone(s.last_usage)
+        self.assertEqual(s.total_cost_usd, 0.0)

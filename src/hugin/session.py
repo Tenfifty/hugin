@@ -52,6 +52,19 @@ class Usage:
     cached_input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float | None = None
+    # The model's window, where the provider reports it. None is not zero: agy
+    # and codex do not say, so a caller must render the absence rather than
+    # invent a denominator.
+    context_window: int | None = None
+
+    @property
+    def context_tokens(self) -> int:
+        """Total prompt size for the turn, cached prefix included.
+
+        This is the number worth showing as "context used": both fields together
+        are what the model actually read.
+        """
+        return self.input_tokens + self.cached_input_tokens
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,7 +72,18 @@ class Usage:
             "cached_input_tokens": self.cached_input_tokens,
             "output_tokens": self.output_tokens,
             "cost_usd": self.cost_usd,
+            "context_window": self.context_window,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Usage":
+        return cls(
+            input_tokens=_int(data, "input_tokens"),
+            cached_input_tokens=_int(data, "cached_input_tokens"),
+            output_tokens=_int(data, "output_tokens"),
+            cost_usd=data.get("cost_usd"),
+            context_window=data.get("context_window"),
+        )
 
 
 @dataclass
@@ -123,11 +147,17 @@ def _parse_claude(s: "Session", stdout: str) -> Turn:
     if data.get("is_error"):
         raise SessionError(str(data.get("result") or "claude turn failed"))
     raw = data.get("usage") or {}
+    window: int | None = None
+    for entry in (data.get("modelUsage") or {}).values():
+        if isinstance(entry, dict) and entry.get("contextWindow"):
+            window = int(entry["contextWindow"])
+            break
     usage = Usage(
         input_tokens=_int(raw, "input_tokens") + _int(raw, "cache_creation_input_tokens"),
         cached_input_tokens=_int(raw, "cache_read_input_tokens"),
         output_tokens=_int(raw, "output_tokens"),
         cost_usd=data.get("total_cost_usd"),
+        context_window=window,
     )
     session_id = data.get("session_id") or s.session_id
     return Turn(
@@ -287,6 +317,10 @@ class Session:
     extra_dirs: list[Path] = field(default_factory=list)
     cfg: LLMConfig = field(default_factory=LLMConfig)
     turns: int = 0
+    # The most recent turn's counts, kept so a caller can show context use
+    # without replaying the conversation. Survives to_dict/from_dict.
+    last_usage: Usage | None = None
+    total_cost_usd: float = 0.0
 
     def __post_init__(self) -> None:
         if self.provider not in _ADAPTERS:
@@ -320,6 +354,11 @@ class Session:
         turn = parse(self, result.stdout)
         self.session_id = turn.session_id
         self.turns += 1
+        self.last_usage = turn.usage
+        if turn.usage.cost_usd:
+            # claude reports a per-turn cost; the others report none, so this
+            # stays a partial total rather than a bill.
+            self.total_cost_usd += turn.usage.cost_usd
         return turn
 
     def to_dict(self) -> dict[str, Any]:
@@ -332,6 +371,8 @@ class Session:
             "session_id": self.session_id,
             "extra_dirs": [str(d) for d in self.extra_dirs],
             "turns": self.turns,
+            "last_usage": self.last_usage.to_dict() if self.last_usage else None,
+            "total_cost_usd": self.total_cost_usd,
         }
 
     @classmethod
@@ -346,6 +387,10 @@ class Session:
             extra_dirs=[Path(d) for d in (data.get("extra_dirs") or [])],
             cfg=cfg or LLMConfig(),
             turns=int(data.get("turns") or 0),
+            last_usage=(
+                Usage.from_dict(data["last_usage"]) if data.get("last_usage") else None
+            ),
+            total_cost_usd=float(data.get("total_cost_usd") or 0.0),
         )
 
     @property
