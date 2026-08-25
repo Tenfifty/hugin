@@ -16,7 +16,9 @@ plus sessions the user can open interactively with ``claude --resume`` /
 
 See CONVENTIONS.md for provider naming. Unlike ``run_prompt``, sessions run in
 a caller-supplied ``cwd`` and keep their tools: callers here generally *want*
-the agent to be able to look things up itself.
+the agent to be able to look things up itself. ``extra_dirs`` widens that reach
+beyond cwd, which matters when the working directory is one repo but the
+material lives in a vault somewhere else.
 """
 
 from __future__ import annotations
@@ -103,6 +105,8 @@ def _cmd_claude(s: "Session", prompt: str) -> tuple[list[str], str | None]:
         cmd.extend(["--session-id", s.session_id])
     if s.read_only:
         cmd.extend(["--permission-mode", "plan"])
+    for extra in s.extra_dirs:
+        cmd.extend(["--add-dir", str(extra)])
     if not _uses_default_model(s.model):
         cmd.extend(["--model", s.model])
     if s.effort:
@@ -136,6 +140,8 @@ def _parse_claude(s: "Session", stdout: str) -> Turn:
 def _cmd_codex(s: "Session", prompt: str) -> tuple[list[str], str | None]:
     # Options must precede the `resume` subcommand: `codex exec resume <id> -s
     # read-only` dies with "unexpected argument '-s'".
+    # extra_dirs needs no flag here: codex's read-only sandbox already grants
+    # disk-wide reads, and a read-write session is not confined to cwd either.
     cmd = [s.cfg.codex_bin, "exec", "--json", "--skip-git-repo-check"]
     if s.read_only:
         cmd.extend(["-s", "read-only"])
@@ -199,6 +205,8 @@ def _cmd_agy(s: "Session", prompt: str) -> tuple[list[str], str | None]:
         cmd.extend(["--mode", "plan", "--sandbox"])
     if s.session_id:
         cmd.extend(["--conversation", s.session_id])
+    for extra in s.extra_dirs:
+        cmd.extend(["--add-dir", str(extra)])
     if not _uses_default_model(s.model):
         cmd.extend(["--model", s.model])
     # For gemini models agy bakes the reasoning level into the model slug
@@ -276,6 +284,7 @@ class Session:
     effort: str | None = None
     read_only: bool = True
     session_id: str | None = None
+    extra_dirs: list[Path] = field(default_factory=list)
     cfg: LLMConfig = field(default_factory=LLMConfig)
     turns: int = 0
 
@@ -285,6 +294,7 @@ class Session:
                 f"session provider must be one of: {', '.join(SESSION_PROVIDERS)}"
             )
         self.cwd = Path(self.cwd).expanduser()
+        self.extra_dirs = [Path(d).expanduser() for d in self.extra_dirs]
 
     def send(self, prompt: str, timeout: int = 900) -> Turn:
         """Run one turn and return the parsed result."""
@@ -320,6 +330,7 @@ class Session:
             "effort": self.effort,
             "read_only": self.read_only,
             "session_id": self.session_id,
+            "extra_dirs": [str(d) for d in self.extra_dirs],
             "turns": self.turns,
         }
 
@@ -332,6 +343,7 @@ class Session:
             effort=data.get("effort"),
             read_only=bool(data.get("read_only", True)),
             session_id=data.get("session_id"),
+            extra_dirs=[Path(d) for d in (data.get("extra_dirs") or [])],
             cfg=cfg or LLMConfig(),
             turns=int(data.get("turns") or 0),
         )

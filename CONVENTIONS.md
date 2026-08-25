@@ -121,8 +121,9 @@ Traps worth knowing:
   input separately; codex and agy report a total that already includes the
   cached prefix. `session.Usage` normalises to new-vs-cached, so don't compare
   raw provider numbers. `total_cost_usd` is claude-only.
-- Unlike `run_prompt`, sessions run in a **caller-supplied cwd** and keep their
-  tools. The clean-cwd rule in the provider table above exists so that one-shot
+- Unlike `run_prompt`, sessions run in a **caller-supplied cwd**, keep their
+  tools, and can be widened past cwd with `extra_dirs` (`--add-dir` for claude
+  and agy; codex needs nothing, its read-only sandbox already reads the disk). The clean-cwd rule in the provider table above exists so that one-shot
   prompts don't pick up a repo `CLAUDE.md`; a session whose whole point is that
   the agent can look things up itself needs the opposite. Pass the real
   directory deliberately.

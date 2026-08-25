@@ -182,3 +182,35 @@ class StateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExtraDirTests(unittest.TestCase):
+    def test_claude_and_agy_get_add_dir_per_extra(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for spec, stdout in (("claude", CLAUDE_OUT), ("agy", AGY_OUT)):
+                with self.subTest(spec=spec):
+                    s = parse_spec(
+                        spec, Path(tmp), extra_dirs=[Path("/a"), Path("/b")]
+                    )
+                    with patch(
+                        "hugin.session.subprocess.run", return_value=Completed(stdout)
+                    ) as run:
+                        s.send("hi")
+                    cmd = run.call_args[0][0]
+                    self.assertEqual(cmd.count("--add-dir"), 2)
+                    self.assertIn("/a", cmd)
+
+    def test_codex_needs_no_flag_since_read_only_reads_the_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            s = parse_spec("codex", Path(tmp), extra_dirs=[Path("/a")])
+            with patch(
+                "hugin.session.subprocess.run", return_value=Completed(CODEX_OUT)
+            ) as run:
+                s.send("hi")
+            self.assertNotIn("--add-dir", run.call_args[0][0])
+
+    def test_extra_dirs_survive_the_disk_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            s = parse_spec("claude", Path(tmp), extra_dirs=[Path("/a")])
+            revived = Session.from_dict(json.loads(json.dumps(s.to_dict())))
+        self.assertEqual(revived.extra_dirs, [Path("/a")])
