@@ -39,7 +39,7 @@ The script never overwrites existing files unless you pass `--force`.
 ```
 src/hugin/
   config.py       SharedConfig + load_tool(name, builder)
-  llm.py          LLMConfig + run_prompt() for codex/claude/gemini/local
+  llm.py          LLMConfig + run_prompt() for codex/claude/agy/local
   init.py         hugin-init CLI
 ```
 
@@ -78,4 +78,5 @@ supported languages, LLM provider naming.
 ## Status
 
 Early. The shared config boundary is stable; the LLM runner is intentionally
-small and wraps Codex, Claude, Gemini, or a local command. MIT licensed.
+small and wraps Codex, Claude, Google Antigravity (`agy`), or a local command.
+MIT licensed.

@@ -68,8 +68,14 @@ Tools that call coding-agent CLIs use these provider names:
 |----------|--------|-------|
 | `codex`  | `codex`  | Default. Honours `effort`. |
 | `claude` | `claude` | Honours `effort`. Runs from a clean cwd so repo `CLAUDE.md` files are not discovered. |
-| `gemini` | `gemini` | Ignores `effort`. Context discovery disabled. |
+| `agy`    | `agy`    | Google Antigravity CLI. Honours `effort`; runs in plan+sandbox mode from a clean cwd. |
 | `local`  | (user-supplied command) | Prompt on stdin, response on stdout. Use for llama.cpp etc. |
+
+`agy` replaced the former `gemini` provider when Google moved Business CLI
+access to Antigravity. Update existing configs from `provider: gemini` to
+`provider: agy`; the old name is not retained as an alias.
+Hugin uses Antigravity's stream-JSON mode so prompts stay on stdin rather than
+appearing in the process argument list.
 
 `model: default` means "let the provider CLI pick its configured model" —
 no `-m` / `--model` flag is passed.

@@ -16,6 +16,14 @@ class Completed:
     stderr = ""
 
 
+class CompletedAgy:
+    returncode = 0
+    stdout = """{"event":"init","conversation_id":"test"}
+{"event":"result","result":{"status":"SUCCESS","response":"ok from agy\\n"}}
+"""
+    stderr = ""
+
+
 class RemoteLLMTests(unittest.TestCase):
     def test_codex_uses_default_model_with_effort_and_output_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -52,22 +60,28 @@ class RemoteLLMTests(unittest.TestCase):
         self.assertIn("--no-session-persistence", cmd)
         self.assertEqual(text, "ok from stdout")
 
-    def test_gemini_uses_clean_context_settings(self) -> None:
+    def test_agy_uses_clean_cwd_plan_and_sandbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             clean_cwd = Path(tmp)
-            cfg = LLMConfig(provider="gemini", clean_cwd=clean_cwd)
-            with patch.object(hugin_llm.subprocess, "run", return_value=Completed()) as run:
+            cfg = LLMConfig(provider="agy", clean_cwd=clean_cwd)
+            with patch.object(hugin_llm.subprocess, "run", return_value=CompletedAgy()) as run:
                 text = run_prompt(cfg, DEFAULT_REMOTE_MODEL, "hello", effort="high")
 
-            settings = json.loads((clean_cwd / ".gemini" / "settings.json").read_text())
-
         cmd = run.call_args.args[0]
-        self.assertEqual(cmd[:2], ["gemini", "--prompt"])
+        kwargs = run.call_args.kwargs
+        self.assertEqual(cmd[0], "agy")
         self.assertNotIn("--model", cmd)
-        self.assertNotIn("--effort", cmd)
-        self.assertEqual(settings["context"]["fileName"], ".hugin-no-gemini-context.md")
-        self.assertEqual(settings["context"]["discoveryMaxDirs"], 0)
-        self.assertEqual(text, "ok from stdout")
+        self.assertEqual(cmd[cmd.index("--effort") + 1], "high")
+        self.assertEqual(cmd[cmd.index("--mode") + 1], "plan")
+        self.assertIn("--sandbox", cmd)
+        self.assertEqual(cmd[cmd.index("--input-format") + 1], "stream-json")
+        self.assertEqual(cmd[cmd.index("--output-format") + 1], "stream-json")
+        self.assertEqual(cmd[-1], "--print=")
+        stream_input = json.loads(kwargs["input"])
+        self.assertEqual(stream_input["event"], "user")
+        self.assertEqual(stream_input["message"]["content"], "hello")
+        self.assertEqual(kwargs["cwd"], clean_cwd)
+        self.assertEqual(text, "ok from agy")
 
     def test_local_provider_runs_configured_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

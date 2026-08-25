@@ -11,7 +11,7 @@ before changing any public API in `src/hugin/`.
 ## What's here
 
 - `src/hugin/config.py` — `SharedConfig` + `load_tool(name, builder)` + helpers
-- `src/hugin/llm.py` — `LLMConfig` + `run_prompt` (codex / claude / gemini / local)
+- `src/hugin/llm.py` — `LLMConfig` + `run_prompt` (codex / claude / agy / local)
 - `src/hugin/prompts.py` — `resolve_prompt(base, language, explicit, package_dir)`
 - `src/hugin/init.py` — the `hugin-init` CLI
 

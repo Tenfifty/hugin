@@ -1,4 +1,4 @@
-"""Run prompts through coding-agent CLIs (codex / claude / gemini) or a
+"""Run prompts through coding-agent CLIs (codex / claude / agy) or a
 user-supplied local command.
 
 Lifted from hugin-meetings. See CONVENTIONS.md for provider semantics.
@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-LLM_PROVIDERS = {"codex", "claude", "gemini", "local"}
+LLM_PROVIDERS = {"codex", "claude", "agy", "local"}
 DEFAULT_REMOTE_MODEL = "default"
 
 
@@ -40,19 +40,14 @@ class LLMConfig:
     )
     codex_bin: str = "codex"
     claude_bin: str = "claude"
-    gemini_bin: str = "gemini"
+    agy_bin: str = "agy"
     codex_args: list[str] = field(default_factory=list)
     # Claude runs from clean_cwd by default so repo-local CLAUDE.md is not discovered.
     claude_args: list[str] = field(default_factory=list)
-    gemini_args: list[str] = field(default_factory=list)
+    agy_args: list[str] = field(default_factory=list)
     # Local provider: receives prompt on stdin, returns text on stdout.
     # Arguments may contain {model} and {effort} placeholders.
     local_command: list[str] = field(default_factory=list)
-    # Gemini has no exact --bare equivalent. Use a clean cwd plus a workspace
-    # setting that points context discovery at an intentionally absent file.
-    gemini_disable_context: bool = True
-    gemini_context_file_name: str = ".hugin-no-gemini-context.md"
-
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LLMConfig":
         provider = str(data.get("provider", "codex")).lower()
@@ -66,15 +61,11 @@ class LLMConfig:
             clean_cwd=Path(clean_cwd).expanduser() if clean_cwd else cls().clean_cwd,
             codex_bin=data.get("codex_bin", "codex"),
             claude_bin=data.get("claude_bin", "claude"),
-            gemini_bin=data.get("gemini_bin", "gemini"),
+            agy_bin=data.get("agy_bin", "agy"),
             codex_args=_string_list(data, "codex_args", []),
             claude_args=_string_list(data, "claude_args", []),
-            gemini_args=_string_list(data, "gemini_args", []),
+            agy_args=_string_list(data, "agy_args", []),
             local_command=_string_list(data, "local_command", []),
-            gemini_disable_context=data.get("gemini_disable_context", True),
-            gemini_context_file_name=data.get(
-                "gemini_context_file_name", ".hugin-no-gemini-context.md"
-            ),
         )
 
 
@@ -87,7 +78,7 @@ def _clean_cwd(cfg: LLMConfig) -> Path:
     return cfg.clean_cwd
 
 
-def _run(cmd: list[str], prompt: str, cwd: Path, timeout: int, provider: str) -> str:
+def _run(cmd: list[str], prompt: str | None, cwd: Path, timeout: int, provider: str) -> str:
     result = subprocess.run(
         cmd,
         input=prompt,
@@ -146,44 +137,49 @@ def _run_claude(cfg: LLMConfig, model: str, prompt: str, effort: str | None, tim
     return _run(cmd, prompt, cwd, timeout, "claude").strip()
 
 
-def _prepare_gemini_cwd(cfg: LLMConfig) -> Path:
+def _run_agy(cfg: LLMConfig, model: str, prompt: str, effort: str | None, timeout: int) -> str:
     cwd = _clean_cwd(cfg)
-    if cfg.gemini_disable_context:
-        settings_dir = cwd / ".gemini"
-        settings_dir.mkdir(parents=True, exist_ok=True)
-        settings = {
-            "context": {
-                "fileName": cfg.gemini_context_file_name,
-                "includeDirectoryTree": False,
-                "discoveryMaxDirs": 0,
-            },
-            "ui": {
-                "hideBanner": True,
-                "hideTips": True,
-            },
-        }
-        (settings_dir / "settings.json").write_text(
-            json.dumps(settings, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    return cwd
-
-
-def _run_gemini(cfg: LLMConfig, model: str, prompt: str, effort: str | None, timeout: int) -> str:
-    cwd = _prepare_gemini_cwd(cfg)
     cmd = [
-        cfg.gemini_bin,
-        "--prompt",
-        "",
+        cfg.agy_bin,
+        "--input-format",
+        "stream-json",
         "--output-format",
-        "text",
-        "--raw-output",
-        "--accept-raw-output-risk",
-        *cfg.gemini_args,
+        "stream-json",
+        "--mode",
+        "plan",
+        "--sandbox",
     ]
     if not _uses_default_model(model):
-        cmd[1:1] = ["--model", model]
-    return _run(cmd, prompt, cwd, timeout, "gemini").strip()
+        cmd.extend(["--model", model])
+    if effort:
+        cmd.extend(["--effort", effort])
+    cmd.extend([*cfg.agy_args, "--print="])
+    stream_input = json.dumps(
+        {
+            "event": "user",
+            "message": {"role": "user", "content": prompt},
+        },
+        ensure_ascii=False,
+    ) + "\n"
+    output = _run(cmd, stream_input, cwd, timeout, "agy")
+
+    terminal: dict[str, Any] | None = None
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "result":
+            terminal = event.get("result")
+
+    if not terminal:
+        raise RuntimeError("agy did not emit a terminal result")
+    if terminal.get("status") != "SUCCESS":
+        raise RuntimeError(terminal.get("error") or "agy prompt failed")
+    response = terminal.get("response")
+    if not isinstance(response, str):
+        raise RuntimeError("agy result did not contain a text response")
+    return response.strip()
 
 
 def _run_local(cfg: LLMConfig, model: str, prompt: str, effort: str | None, timeout: int) -> str:
@@ -202,7 +198,7 @@ def _run_local(cfg: LLMConfig, model: str, prompt: str, effort: str | None, time
 _PROVIDERS = {
     "codex": _run_codex,
     "claude": _run_claude,
-    "gemini": _run_gemini,
+    "agy": _run_agy,
     "local": _run_local,
 }
 
