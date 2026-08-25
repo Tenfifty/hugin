@@ -86,6 +86,51 @@ support it.
 See `hugin.llm.LLMConfig` for the full schema and `hugin.llm.run_prompt`
 for the runner.
 
+## Persistent sessions
+
+`hugin.llm.run_prompt` is one-shot on purpose: it passes `--ephemeral` to codex
+and `--no-session-persistence` to claude, so nothing is left behind. When a
+tool needs a conversation that survives across turns, use `hugin.session`
+instead.
+
+`Session` keeps a provider-side conversation and resumes it by id, running one
+process per turn. That does **not** cost prompt caching: the cache is
+server-side and keyed on the content prefix, not on the client process.
+Measured 2026-08-25, resumed turns in a fresh process read 26665 (claude),
+16768 (codex) and 12193 (agy) tokens from cache. So there is no reason to drive
+a pty or keep a long-lived child alive, and per-turn processes buy crash
+isolation plus sessions the user can open by hand.
+
+| Provider | Id minted by | Resume flag |
+|----------|-------------|-------------|
+| `claude` | us, `--session-id <uuid>` | `--resume <uuid>` |
+| `codex`  | the CLI, `thread.started.thread_id` | `resume <id>` |
+| `agy`    | the CLI, `init.conversation_id` | `--conversation <id>` |
+
+Traps worth knowing:
+
+- **codex options must precede the `resume` subcommand.** `codex exec resume
+  <id> -s read-only` fails with `unexpected argument '-s'`.
+- **agy bakes the reasoning level into the model slug** for gemini models
+  (`gemini-3.7-flash-high`), and also has an `--effort` flag. Precedence is
+  undocumented, so `Session` lets the slug win and only forwards `--effort`
+  when the model is left at the provider default. Note `gemini-3.1-pro` has no
+  `medium`, so the `low|medium|high` triple does not map cleanly onto it; a
+  roster must be able to pass a raw slug through untouched.
+- **Usage arithmetic differs per provider.** claude reports new and cached
+  input separately; codex and agy report a total that already includes the
+  cached prefix. `session.Usage` normalises to new-vs-cached, so don't compare
+  raw provider numbers. `total_cost_usd` is claude-only.
+- Unlike `run_prompt`, sessions run in a **caller-supplied cwd** and keep their
+  tools. The clean-cwd rule in the provider table above exists so that one-shot
+  prompts don't pick up a repo `CLAUDE.md`; a session whose whole point is that
+  the agent can look things up itself needs the opposite. Pass the real
+  directory deliberately.
+
+See `hugin.session.Session` and `hugin.session.parse_spec` (the shared
+`provider[:model[:effort]]` roster grammar used by both config files and CLI
+flags).
+
 ## Languages
 
 `en` and `sv` are first-class. A tool that ships language-dependent assets
