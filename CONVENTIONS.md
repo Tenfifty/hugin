@@ -121,6 +121,28 @@ Traps worth knowing:
   input separately; codex and agy report a total that already includes the
   cached prefix. `session.Usage` normalises to new-vs-cached, so don't compare
   raw provider numbers. `total_cost_usd` is claude-only.
+- **`read_only` is a tool list for claude, not a permission mode.**
+  `--permission-mode plan` is Claude Code's planning workflow: it writes the
+  answer to `~/.claude/plans/` as a side effect and shapes it into an
+  implementation plan. Read-only is `--tools=Read,Grep,Glob,WebSearch,WebFetch`
+  plus `--strict-mcp-config --mcp-config={"mcpServers":{}}` — without the
+  latter the session inherits the user's own MCP servers and can post to Slack.
+  Both options are variadic, hence the `=` form: otherwise they swallow the
+  prompt.
+- **Watching a turn happen: `send(..., on_event=cb)`.** All three providers
+  emit NDJSON, so one mechanism covers them: claude needs
+  `--output-format stream-json --verbose` (it refuses stream-json in print mode
+  without `--verbose`), codex `exec --json` and agy `--output-format
+  stream-json` already do. Events are normalised to
+  `Event(kind, name, detail)` with kind `tool`, `text` or `notice`. The
+  per-provider shapes are: claude `assistant` messages carrying `tool_use`
+  blocks; codex `item.started` with an `item.type` (`command_execution`,
+  `agent_message`, …); agy `step_update` with `step_type: tool` and a `state`
+  of `ACTIVE` or `DONE`. codex and agy report every step twice, so only the
+  starting half is emitted. Streaming uses `Popen` with `start_new_session=True`
+  and kills the **process group** on timeout: killing the CLI alone leaves its
+  children holding the stdout pipe, and the read loop then waits for them
+  rather than for the timeout that just fired.
 - Unlike `run_prompt`, sessions run in a **caller-supplied cwd**, keep their
   tools, and can be widened past cwd with `extra_dirs` (`--add-dir` for claude
   and agy; codex needs nothing, its read-only sandbox already reads the disk). The clean-cwd rule in the provider table above exists so that one-shot

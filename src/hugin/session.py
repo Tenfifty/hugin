@@ -24,11 +24,15 @@ material lives in a vault somewhere else.
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
+import tempfile
+import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .llm import DEFAULT_REMOTE_MODEL, LLMConfig, _uses_default_model
 
@@ -101,8 +105,41 @@ class Turn:
     wall_seconds: float | None = None
 
 
+@dataclass
+class Event:
+    """One thing a provider did mid-turn, normalised across the three.
+
+    Only what a person watching wants: which tool, on what. The providers
+    disagree about everything else, and the parts they disagree about are not
+    worth a common vocabulary.
+    """
+
+    kind: str  # "tool", "text" or "notice"
+    name: str = ""
+    detail: str = ""
+
+
 class SessionError(RuntimeError):
     """A turn failed. Carries the provider's own message where there is one."""
+
+
+def _loads(line: str) -> dict[str, Any] | None:
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _first(data: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _int(data: dict[str, Any], key: str) -> int:
@@ -122,13 +159,16 @@ def _int(data: dict[str, Any], key: str) -> int:
 READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "WebSearch", "WebFetch")
 
 
-def _cmd_claude(s: "Session", prompt: str) -> tuple[list[str], str | None]:
+def _cmd_claude(s: "Session", prompt: str, stream: bool = False) -> tuple[list[str], str | None]:
     cmd = [
         s.cfg.claude_bin,
         *s.cfg.claude_args,
         "--print",
         "--output-format",
-        "json",
+        # stream-json is the same result object, preceded by one line per step.
+        # --verbose is not optional: claude refuses stream-json in print mode
+        # without it.
+        *(["stream-json", "--verbose"] if stream else ["json"]),
     ]
     if s.session_id:
         cmd.extend(["--resume", s.session_id])
@@ -157,11 +197,35 @@ def _cmd_claude(s: "Session", prompt: str) -> tuple[list[str], str | None]:
     return cmd, None
 
 
+def _events_claude(obj: dict[str, Any]) -> list[Event]:
+    kind = obj.get("type")
+    if kind == "system" and obj.get("subtype") == "permission_denied":
+        return [Event("notice", "denied", _first(obj, "tool_name"))]
+    if kind != "assistant":
+        return []
+    events = []
+    for block in (obj.get("message") or {}).get("content") or []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use":
+            data = block.get("input") or {}
+            detail = _first(data, "command", "pattern", "file_path", "url", "query", "path")
+            events.append(Event("tool", str(block.get("name") or "tool"), detail))
+        elif block.get("type") == "text" and str(block.get("text") or "").strip():
+            events.append(Event("text", "", str(block["text"]).strip()))
+    return events
+
+
 def _parse_claude(s: "Session", stdout: str) -> Turn:
-    try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        raise SessionError(f"claude did not return JSON: {stdout[:200]}") from exc
+    data: dict[str, Any] | None = None
+    for line in stdout.splitlines():
+        obj = _loads(line)
+        # Under --output-format json there is one object and no "type"; under
+        # stream-json the last result line is the same object, so both land here.
+        if obj is not None and (obj.get("type") == "result" or "type" not in obj):
+            data = obj
+    if data is None:
+        raise SessionError(f"claude did not return JSON: {stdout[:200]}")
     if data.get("is_error"):
         raise SessionError(str(data.get("result") or "claude turn failed"))
     raw = data.get("usage") or {}
@@ -185,7 +249,8 @@ def _parse_claude(s: "Session", stdout: str) -> Turn:
     )
 
 
-def _cmd_codex(s: "Session", prompt: str) -> tuple[list[str], str | None]:
+def _cmd_codex(s: "Session", prompt: str, stream: bool = False) -> tuple[list[str], str | None]:
+    # Already NDJSON either way, so streaming needs no flag of its own.
     # Options must precede the `resume` subcommand: `codex exec resume <id> -s
     # read-only` dies with "unexpected argument '-s'".
     # extra_dirs needs no flag here: codex's read-only sandbox already grants
@@ -203,6 +268,19 @@ def _cmd_codex(s: "Session", prompt: str) -> tuple[list[str], str | None]:
     else:
         cmd.append(prompt)
     return cmd, None
+
+
+def _events_codex(obj: dict[str, Any]) -> list[Event]:
+    if obj.get("type") != "item.started":
+        # item.completed would repeat the same call with its output attached,
+        # and the point is to see the work as it happens.
+        return []
+    item = obj.get("item") or {}
+    kind = str(item.get("type") or "")
+    if kind == "agent_message":
+        return []
+    detail = _first(item, "command", "path", "query", "url", "text")
+    return [Event("tool", kind or "tool", detail)]
 
 
 def _parse_codex(s: "Session", stdout: str) -> Turn:
@@ -241,7 +319,8 @@ def _parse_codex(s: "Session", stdout: str) -> Turn:
     return Turn(text="\n".join(text).strip(), usage=usage, session_id=session_id)
 
 
-def _cmd_agy(s: "Session", prompt: str) -> tuple[list[str], str | None]:
+def _cmd_agy(s: "Session", prompt: str, stream: bool = False) -> tuple[list[str], str | None]:
+    # Already NDJSON either way, so streaming needs no flag of its own.
     cmd = [
         s.cfg.agy_bin,
         "--input-format",
@@ -269,6 +348,17 @@ def _cmd_agy(s: "Session", prompt: str) -> tuple[list[str], str | None]:
         ensure_ascii=False,
     )
     return cmd, payload + "\n"
+
+
+def _events_agy(obj: dict[str, Any]) -> list[Event]:
+    if obj.get("event") != "step_update":
+        return []
+    step = obj.get("step_update") or {}
+    # ACTIVE only: every step is reported twice, once starting and once done.
+    if step.get("state") != "ACTIVE" or step.get("step_type") != "tool":
+        return []
+    detail = _first(step, "command", "tool_input", "path", "query")
+    return [Event("tool", _first(step, "tool_name") or "tool", detail)]
 
 
 def _parse_agy(s: "Session", stdout: str) -> Turn:
@@ -310,10 +400,12 @@ def _parse_agy(s: "Session", stdout: str) -> Turn:
     )
 
 
+# build, parse, extract-events. All three providers emit NDJSON when asked, so
+# watching a turn happen is the same mechanism everywhere.
 _ADAPTERS = {
-    "claude": (_cmd_claude, _parse_claude),
-    "codex": (_cmd_codex, _parse_codex),
-    "agy": (_cmd_agy, _parse_agy),
+    "claude": (_cmd_claude, _parse_claude, _events_claude),
+    "codex": (_cmd_codex, _parse_codex, _events_codex),
+    "agy": (_cmd_agy, _parse_agy, _events_agy),
 }
 
 
@@ -348,11 +440,37 @@ class Session:
         self.cwd = Path(self.cwd).expanduser()
         self.extra_dirs = [Path(d).expanduser() for d in self.extra_dirs]
 
-    def send(self, prompt: str, timeout: int = 900) -> Turn:
-        """Run one turn and return the parsed result."""
-        build, parse = _ADAPTERS[self.provider]
-        cmd, stdin_text = build(self, prompt)
+    def send(
+        self,
+        prompt: str,
+        timeout: int = 900,
+        on_event: Callable[[Event], None] | None = None,
+    ) -> Turn:
+        """Run one turn and return the parsed result.
+
+        Pass ``on_event`` to watch the turn happen: it is called with an
+        :class:`Event` per tool call and per piece of text the model emits
+        before its answer. A turn that runs 40 tool calls behind a silent
+        prompt is indistinguishable from one that has hung.
+        """
+        build, parse, _ = _ADAPTERS[self.provider]
+        cmd, stdin_text = build(self, prompt, on_event is not None)
         self.cwd.mkdir(parents=True, exist_ok=True)
+        if on_event is None:
+            stdout = self._run(cmd, stdin_text, timeout)
+        else:
+            stdout = self._stream(cmd, stdin_text, timeout, on_event)
+        turn = parse(self, stdout)
+        self.session_id = turn.session_id
+        self.turns += 1
+        self.last_usage = turn.usage
+        if turn.usage.cost_usd:
+            # claude reports a per-turn cost; the others report none, so this
+            # stays a partial total rather than a bill.
+            self.total_cost_usd += turn.usage.cost_usd
+        return turn
+
+    def _run(self, cmd: list[str], stdin_text: str | None, timeout: int) -> str:
         try:
             result = subprocess.run(
                 cmd,
@@ -363,21 +481,91 @@ class Session:
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            raise SessionError(
-                f"{self.provider} turn exceeded {timeout}s"
-            ) from exc
+            raise SessionError(f"{self.provider} turn exceeded {timeout}s") from exc
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
             raise SessionError(detail or f"{self.provider} turn failed")
-        turn = parse(self, result.stdout)
-        self.session_id = turn.session_id
-        self.turns += 1
-        self.last_usage = turn.usage
-        if turn.usage.cost_usd:
-            # claude reports a per-turn cost; the others report none, so this
-            # stays a partial total rather than a bill.
-            self.total_cost_usd += turn.usage.cost_usd
-        return turn
+        return result.stdout
+
+    def _stream(
+        self,
+        cmd: list[str],
+        stdin_text: str | None,
+        timeout: int,
+        on_event: Callable[[Event], None],
+    ) -> str:
+        extract = _ADAPTERS[self.provider][2]
+        # stderr to a file rather than a pipe: reading one pipe while the other
+        # fills is the classic deadlock, and stderr is only wanted on failure.
+        with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as errors:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE if stdin_text else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=errors,
+                cwd=self.cwd,
+                text=True,
+                # Own process group, so the whole tree can be killed. Killing
+                # the CLI alone leaves its children holding the stdout pipe,
+                # and the read loop then waits for them rather than for the
+                # timeout that just fired.
+                start_new_session=True,
+            )
+
+            def kill_tree() -> None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    proc.kill()
+            # A watchdog, not a per-line deadline: a provider that hangs emits
+            # no line at all, which is exactly the case worth killing.
+            expired = threading.Event()
+
+            def on_timeout() -> None:
+                expired.set()
+                kill_tree()
+
+            watchdog = threading.Timer(timeout, on_timeout)
+            watchdog.start()
+            lines: list[str] = []
+            # Text is held back one event. The last thing a model says is its
+            # answer, which the caller is about to print in full; what is worth
+            # watching is the narration *between* tool calls. Deferring means
+            # the final text is simply never flushed.
+            pending: Event | None = None
+            try:
+                if stdin_text and proc.stdin is not None:
+                    proc.stdin.write(stdin_text)
+                    proc.stdin.close()
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    lines.append(line)
+                    parsed = _loads(line)
+                    if parsed is None:
+                        continue
+                    for event in extract(parsed):
+                        if pending is not None:
+                            on_event(pending)
+                            pending = None
+                        if event.kind == "text":
+                            pending = event
+                        else:
+                            on_event(event)
+                code = proc.wait()
+            except BaseException:
+                # Ctrl-C included: the group is detached from ours, so nothing
+                # else will reap it.
+                kill_tree()
+                raise
+            finally:
+                watchdog.cancel()
+            if expired.is_set():
+                raise SessionError(f"{self.provider} turn exceeded {timeout}s")
+            if code != 0:
+                errors.seek(0)
+                detail = errors.read().strip() or "".join(lines).strip()
+                raise SessionError(detail or f"{self.provider} turn failed")
+        return "".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
         return {
