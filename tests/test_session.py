@@ -79,8 +79,7 @@ class TurnTests(unittest.TestCase):
         self.assertNotIn("--resume", first)
         self.assertIn("--resume", second)
         self.assertIn("11111111-2222-3333-4444-555555555555", second)
-        self.assertIn("--permission-mode", first)
-        self.assertIn("plan", first)
+        self.assertNotIn("--permission-mode", first)
 
     def test_claude_usage_splits_new_from_cached(self) -> None:
         _, turn, _ = self._send("claude", CLAUDE_OUT)
@@ -121,6 +120,25 @@ class TurnTests(unittest.TestCase):
         self.assertNotIn("--effort", call[0][0])
         _, _, call = self._send("agy::high", AGY_OUT)
         self.assertIn("--effort", call[0][0])
+
+    def test_claude_read_only_is_a_tool_list_and_no_inherited_mcp(self) -> None:
+        # Plan mode is a workflow, not a sandbox: it writes to ~/.claude/plans
+        # and shapes the answer. And without --strict-mcp-config the user's own
+        # MCP servers come along, so a "read-only" member could post to Slack.
+        _, _, call = self._send("claude", CLAUDE_OUT)
+        cmd = call[0][0]
+        self.assertIn("--tools=Read,Grep,Glob,WebSearch,WebFetch", cmd)
+        self.assertIn("--strict-mcp-config", cmd)
+        self.assertIn('--mcp-config={"mcpServers":{}}', cmd)
+        # Both options are variadic, so the `=` form is what keeps them from
+        # swallowing the prompt, which is the last argument.
+        self.assertEqual(cmd[-1], "hi")
+
+    def test_claude_read_write_session_keeps_every_tool(self) -> None:
+        _, _, call = self._send("claude", CLAUDE_OUT, read_only=False)
+        cmd = call[0][0]
+        self.assertFalse([a for a in cmd if a.startswith("--tools")])
+        self.assertNotIn("--strict-mcp-config", cmd)
 
     def test_read_write_session_drops_the_plan_flags(self) -> None:
         _, _, call = self._send("codex", CODEX_OUT, read_only=False)

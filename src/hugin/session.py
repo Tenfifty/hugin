@@ -118,6 +118,10 @@ def _int(data: dict[str, Any], key: str) -> int:
 # --------------------------------------------------------------------------
 
 
+# Read, search, and look things up on the web; write nothing, run nothing.
+READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "WebSearch", "WebFetch")
+
+
 def _cmd_claude(s: "Session", prompt: str) -> tuple[list[str], str | None]:
     cmd = [
         s.cfg.claude_bin,
@@ -133,7 +137,16 @@ def _cmd_claude(s: "Session", prompt: str) -> tuple[list[str], str | None]:
         s.session_id = str(uuid.uuid4())
         cmd.extend(["--session-id", s.session_id])
     if s.read_only:
-        cmd.extend(["--permission-mode", "plan"])
+        # Not `--permission-mode plan`. Plan mode is Claude Code's planning
+        # workflow, not a sandbox: a council member run under it wrote its whole
+        # answer to ~/.claude/plans/ as a side effect and was primed to produce
+        # an implementation plan rather than an answer. An explicit tool list is
+        # the actual read-only setting. --strict-mcp-config matters as much as
+        # the list: without it the user's own MCP servers are inherited, so a
+        # "read-only" session can post to Slack. The `=` form is deliberate,
+        # since both options are variadic and would otherwise swallow the prompt.
+        cmd.append(f"--tools={','.join(READ_ONLY_TOOLS)}")
+        cmd.extend(["--strict-mcp-config", '--mcp-config={"mcpServers":{}}'])
     for extra in s.extra_dirs:
         cmd.extend(["--add-dir", str(extra)])
     if not _uses_default_model(s.model):
