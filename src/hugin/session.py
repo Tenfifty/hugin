@@ -58,11 +58,16 @@ class Usage:
     context_window: int | None = None
 
     @property
-    def context_tokens(self) -> int:
-        """Total prompt size for the turn, cached prefix included.
+    def read_tokens(self) -> int:
+        """Everything the model read during the turn, cached prefix included.
 
-        This is the number worth showing as "context used": both fields together
-        are what the model actually read.
+        Not a context size, and it was called ``context_tokens`` until a real
+        agentic turn made the difference obvious: one gather turn with 43 tool
+        calls reported 2.29M read against a 200k window, because the providers
+        sum the usage over every request the turn made. The true context was
+        104k, visible only in claude's own transcript and in no field of
+        ``--output-format json``. So this is reported as what it is, and nothing
+        divides it by :attr:`context_window`.
         """
         return self.input_tokens + self.cached_input_tokens
 

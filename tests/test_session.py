@@ -228,7 +228,7 @@ class UsageTrackingTests(unittest.TestCase):
             ):
                 turn = s.send("hi")
         self.assertEqual(turn.usage.context_window, 1_000_000)
-        self.assertEqual(turn.usage.context_tokens, 632 + 26665)
+        self.assertEqual(turn.usage.read_tokens, 632 + 26665)
 
     def test_a_provider_that_does_not_say_leaves_the_window_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
