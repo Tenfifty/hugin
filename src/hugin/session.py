@@ -409,6 +409,19 @@ _ADAPTERS = {
 }
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill a CLI and everything it spawned.
+
+    Killing the CLI alone leaves its children holding the stdout pipe, and a
+    reader then waits for them rather than for the kill that just happened.
+    Both run paths start the CLI in its own process group for this reason.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+
+
 @dataclass
 class Session:
     """A provider-side conversation that survives across processes.
@@ -431,6 +444,10 @@ class Session:
     # without replaying the conversation. Survives to_dict/from_dict.
     last_usage: Usage | None = None
     total_cost_usd: float = 0.0
+    # The CLI process of the turn in flight, if any. Not persisted: it exists
+    # so that :meth:`cancel` can reach a turn running on another thread.
+    _proc: subprocess.Popen | None = field(default=None, repr=False, compare=False)
+    _cancelled: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.provider not in _ADAPTERS:
@@ -470,22 +487,50 @@ class Session:
             self.total_cost_usd += turn.usage.cost_usd
         return turn
 
+    def cancel(self) -> None:
+        """Kill the turn in flight, from any thread.
+
+        The members of a council run in worker threads, so a Ctrl-C lands in
+        the main thread and never reaches them; this is how it does. The turn's
+        ``send`` then raises :class:`SessionError`. A session with no turn in
+        flight is left alone.
+        """
+        self._cancelled = True
+        proc = self._proc
+        if proc is not None:
+            _kill_tree(proc)
+
     def _run(self, cmd: list[str], stdin_text: str | None, timeout: int) -> str:
+        self._cancelled = False
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=self.cwd,
+            text=True,
+            # Own process group, for the same reason as in _stream: a cancel
+            # must take the CLI's children with it.
+            start_new_session=True,
+        )
+        self._proc = proc
         try:
-            result = subprocess.run(
-                cmd,
-                input=stdin_text,
-                cwd=self.cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            stdout, stderr = proc.communicate(stdin_text, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
+            _kill_tree(proc)
+            proc.communicate()
             raise SessionError(f"{self.provider} turn exceeded {timeout}s") from exc
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip()
+        except BaseException:
+            _kill_tree(proc)
+            raise
+        finally:
+            self._proc = None
+        if self._cancelled:
+            raise SessionError(f"{self.provider} turn cancelled")
+        if proc.returncode != 0:
+            detail = (stderr or stdout).strip()
             raise SessionError(detail or f"{self.provider} turn failed")
-        return result.stdout
+        return stdout
 
     def _stream(
         self,
@@ -511,12 +556,11 @@ class Session:
                 # timeout that just fired.
                 start_new_session=True,
             )
+            self._proc = proc
+            self._cancelled = False
 
             def kill_tree() -> None:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    proc.kill()
+                _kill_tree(proc)
             # A watchdog, not a per-line deadline: a provider that hangs emits
             # no line at all, which is exactly the case worth killing.
             expired = threading.Event()
@@ -559,6 +603,9 @@ class Session:
                 raise
             finally:
                 watchdog.cancel()
+                self._proc = None
+            if self._cancelled:
+                raise SessionError(f"{self.provider} turn cancelled")
             if expired.is_set():
                 raise SessionError(f"{self.provider} turn exceeded {timeout}s")
             if code != 0:

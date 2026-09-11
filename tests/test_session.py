@@ -9,10 +9,20 @@ from unittest.mock import patch
 from hugin.session import Session, SessionError, parse_spec
 
 
-class Completed:
-    returncode = 0
-    stderr = ""
+class FakeProc:
+    """Stands in for subprocess.Popen on the non-streaming path."""
 
+    returncode = 0
+    stdout = ""
+    stderr = ""
+    pid = 0
+
+    def communicate(self, input=None, timeout=None):
+        self.stdin_text = input
+        return self.stdout, self.stderr
+
+
+class Completed(FakeProc):
     def __init__(self, stdout: str) -> None:
         self.stdout = stdout
 
@@ -63,14 +73,17 @@ class TurnTests(unittest.TestCase):
     def _send(self, spec: str, stdout: str, **kwargs):
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec(spec, Path(tmp), **kwargs)
-            with patch("hugin.session.subprocess.run", return_value=Completed(stdout)) as run:
+            proc = Completed(stdout)
+            with patch("hugin.session.subprocess.Popen", return_value=proc) as run:
                 turn = s.send("hi")
+            # What went down stdin is on the fake, since Popen no longer sees it.
+            run.call_args.kwargs["input"] = proc.stdin_text
             return s, turn, run.call_args
 
     def test_claude_mints_its_own_id_then_resumes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("claude:fable-5:high", Path(tmp))
-            with patch("hugin.session.subprocess.run", return_value=Completed(CLAUDE_OUT)) as run:
+            with patch("hugin.session.subprocess.Popen", return_value=Completed(CLAUDE_OUT)) as run:
                 s.send("hi")
                 first = run.call_args[0][0]
                 s.send("again")
@@ -91,7 +104,7 @@ class TurnTests(unittest.TestCase):
     def test_codex_options_precede_resume_subcommand(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("codex:gpt-5.5:high", Path(tmp))
-            with patch("hugin.session.subprocess.run", return_value=Completed(CODEX_OUT)) as run:
+            with patch("hugin.session.subprocess.Popen", return_value=Completed(CODEX_OUT)) as run:
                 s.send("hi")
                 s.send("again")
                 cmd = run.call_args[0][0]
@@ -149,14 +162,14 @@ class TurnTests(unittest.TestCase):
 
 class FailureTests(unittest.TestCase):
     def test_nonzero_exit_surfaces_provider_stderr(self) -> None:
-        class Failed:
+        class Failed(FakeProc):
             returncode = 1
             stdout = ""
             stderr = "unexpected argument '-s' found"
 
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("codex", Path(tmp))
-            with patch("hugin.session.subprocess.run", return_value=Failed()):
+            with patch("hugin.session.subprocess.Popen", return_value=Failed()):
                 with self.assertRaises(SessionError) as ctx:
                     s.send("hi")
         self.assertIn("unexpected argument", str(ctx.exception))
@@ -165,21 +178,21 @@ class FailureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("agy", Path(tmp))
             with patch(
-                "hugin.session.subprocess.run",
+                "hugin.session.subprocess.Popen",
                 return_value=Completed('{"event":"init","conversation_id":"x"}\n'),
             ):
                 with self.assertRaises(SessionError):
                     s.send("hi")
 
     def test_failed_turn_does_not_count(self) -> None:
-        class Failed:
+        class Failed(FakeProc):
             returncode = 1
             stdout = ""
             stderr = "boom"
 
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("claude", Path(tmp))
-            with patch("hugin.session.subprocess.run", return_value=Failed()):
+            with patch("hugin.session.subprocess.Popen", return_value=Failed()):
                 with self.assertRaises(SessionError):
                     s.send("hi")
             self.assertEqual(s.turns, 0)
@@ -189,7 +202,7 @@ class StateTests(unittest.TestCase):
     def test_round_trip_through_disk_keeps_the_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("codex:gpt-5.5:high", Path(tmp))
-            with patch("hugin.session.subprocess.run", return_value=Completed(CODEX_OUT)):
+            with patch("hugin.session.subprocess.Popen", return_value=Completed(CODEX_OUT)):
                 s.send("hi")
             revived = Session.from_dict(json.loads(json.dumps(s.to_dict())))
         self.assertEqual(revived.session_id, s.session_id)
@@ -211,7 +224,7 @@ class ExtraDirTests(unittest.TestCase):
                         spec, Path(tmp), extra_dirs=[Path("/a"), Path("/b")]
                     )
                     with patch(
-                        "hugin.session.subprocess.run", return_value=Completed(stdout)
+                        "hugin.session.subprocess.Popen", return_value=Completed(stdout)
                     ) as run:
                         s.send("hi")
                     cmd = run.call_args[0][0]
@@ -222,7 +235,7 @@ class ExtraDirTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("codex", Path(tmp), extra_dirs=[Path("/a")])
             with patch(
-                "hugin.session.subprocess.run", return_value=Completed(CODEX_OUT)
+                "hugin.session.subprocess.Popen", return_value=Completed(CODEX_OUT)
             ) as run:
                 s.send("hi")
             self.assertNotIn("--add-dir", run.call_args[0][0])
@@ -241,7 +254,7 @@ class UsageTrackingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("claude", Path(tmp))
             with patch(
-                "hugin.session.subprocess.run",
+                "hugin.session.subprocess.Popen",
                 return_value=Completed(json.dumps(payload)),
             ):
                 turn = s.send("hi")
@@ -251,7 +264,7 @@ class UsageTrackingTests(unittest.TestCase):
     def test_a_provider_that_does_not_say_leaves_the_window_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("codex", Path(tmp))
-            with patch("hugin.session.subprocess.run", return_value=Completed(CODEX_OUT)):
+            with patch("hugin.session.subprocess.Popen", return_value=Completed(CODEX_OUT)):
                 turn = s.send("hi")
         self.assertIsNone(turn.usage.context_window)
 
@@ -259,7 +272,7 @@ class UsageTrackingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("claude", Path(tmp))
             with patch(
-                "hugin.session.subprocess.run", return_value=Completed(CLAUDE_OUT)
+                "hugin.session.subprocess.Popen", return_value=Completed(CLAUDE_OUT)
             ):
                 s.send("one")
                 s.send("two")
@@ -269,15 +282,37 @@ class UsageTrackingTests(unittest.TestCase):
         self.assertEqual(revived.last_usage.cached_input_tokens, 26665)
 
     def test_a_failed_turn_leaves_usage_untouched(self) -> None:
-        class Failed:
+        class Failed(FakeProc):
             returncode = 1
             stdout = ""
             stderr = "boom"
 
         with tempfile.TemporaryDirectory() as tmp:
             s = parse_spec("claude", Path(tmp))
-            with patch("hugin.session.subprocess.run", return_value=Failed()):
+            with patch("hugin.session.subprocess.Popen", return_value=Failed()):
                 with self.assertRaises(SessionError):
                     s.send("hi")
         self.assertIsNone(s.last_usage)
         self.assertEqual(s.total_cost_usd, 0.0)
+
+
+class CancelTests(unittest.TestCase):
+    def test_cancel_from_another_thread_kills_the_turn_promptly(self) -> None:
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            s = parse_spec("codex", Path(tmp))
+            # A CLI that would run for a minute; the cancel must not wait for it.
+            # _ADAPTERS holds the function itself, so it is the entry that is
+            # patched, not the module attribute.
+            build, parse, events = __import__("hugin.session", fromlist=["_ADAPTERS"])._ADAPTERS["codex"]
+            slow = (lambda s, prompt, stream=False: (["sh", "-c", "sleep 60; echo never"], None))
+            with patch.dict("hugin.session._ADAPTERS", {"codex": (slow, parse, events)}):
+                threading.Timer(0.2, s.cancel).start()
+                started = time.monotonic()
+                with self.assertRaises(SessionError) as ctx:
+                    s.send("hi", timeout=30)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertIn("cancelled", str(ctx.exception))
+        self.assertEqual(s.turns, 0)
