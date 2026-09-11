@@ -124,7 +124,7 @@ Traps worth knowing:
 - **`read_only` is a tool list for claude, not a permission mode.**
   `--permission-mode plan` is Claude Code's planning workflow: it writes the
   answer to `~/.claude/plans/` as a side effect and shapes it into an
-  implementation plan. Read-only is `--tools=Read,Grep,Glob,WebSearch,WebFetch`
+  implementation plan. Read-only is `--tools=Read,Grep,Glob`
   plus `--strict-mcp-config --mcp-config={"mcpServers":{}}` — without the
   latter the session inherits the user's own MCP servers and can post to Slack.
   Both options are variadic, hence the `=` form: otherwise they swallow the

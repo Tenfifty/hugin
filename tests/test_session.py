@@ -140,7 +140,7 @@ class TurnTests(unittest.TestCase):
         # MCP servers come along, so a "read-only" member could post to Slack.
         _, _, call = self._send("claude", CLAUDE_OUT)
         cmd = call[0][0]
-        self.assertIn("--tools=Read,Grep,Glob,WebSearch,WebFetch", cmd)
+        self.assertIn("--tools=Read,Grep,Glob", cmd)
         self.assertIn("--strict-mcp-config", cmd)
         self.assertIn('--mcp-config={"mcpServers":{}}', cmd)
         # Both options are variadic, so the `=` form is what keeps them from

@@ -155,8 +155,10 @@ def _int(data: dict[str, Any], key: str) -> int:
 # --------------------------------------------------------------------------
 
 
-# Read, search, and look things up on the web; write nothing, run nothing.
-READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "WebSearch", "WebFetch")
+# Read the disk; write nothing, run nothing, fetch nothing. The web tools were
+# in this list until 2026-09-11; a council member needs the vault and the repo,
+# and the secretary, which is not read-only, has the web.
+READ_ONLY_TOOLS = ("Read", "Grep", "Glob")
 
 
 def _cmd_claude(s: "Session", prompt: str, stream: bool = False) -> tuple[list[str], str | None]:
