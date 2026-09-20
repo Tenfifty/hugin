@@ -67,7 +67,7 @@ Tools that call coding-agent CLIs use these provider names:
 | Provider | Binary | Notes |
 |----------|--------|-------|
 | `codex`  | `codex`  | Default. Honours `effort`. |
-| `claude` | `claude` | Honours `effort`. Runs from a clean cwd so repo `CLAUDE.md` files are not discovered. |
+| `claude` | `claude` | Honours `effort`. Runs from a clean cwd so repo `CLAUDE.md`/`AGENTS.md` files are not discovered. |
 | `agy`    | `agy`    | Google Antigravity CLI. Honours `effort`; runs in plan+sandbox mode from a clean cwd. |
 | `local`  | (user-supplied command) | Prompt on stdin, response on stdout. Use for llama.cpp etc. |
 
@@ -146,7 +146,7 @@ Traps worth knowing:
 - Unlike `run_prompt`, sessions run in a **caller-supplied cwd**, keep their
   tools, and can be widened past cwd with `extra_dirs` (`--add-dir` for claude
   and agy; codex needs nothing, its read-only sandbox already reads the disk). The clean-cwd rule in the provider table above exists so that one-shot
-  prompts don't pick up a repo `CLAUDE.md`; a session whose whole point is that
+  prompts don't pick up a repo `CLAUDE.md` or `AGENTS.md`; a session whose whole point is that
   the agent can look things up itself needs the opposite. Pass the real
   directory deliberately.
 

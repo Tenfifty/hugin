@@ -42,7 +42,7 @@ class LLMConfig:
     claude_bin: str = "claude"
     agy_bin: str = "agy"
     codex_args: list[str] = field(default_factory=list)
-    # Claude runs from clean_cwd by default so repo-local CLAUDE.md is not discovered.
+    # Claude runs from clean_cwd by default so repo-local CLAUDE.md/AGENTS.md is not discovered.
     claude_args: list[str] = field(default_factory=list)
     agy_args: list[str] = field(default_factory=list)
     # Local provider: receives prompt on stdin, returns text on stdout.
