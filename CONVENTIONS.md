@@ -182,11 +182,27 @@ Files suffixed ``.example.md`` (e.g. ``summary_sv_personal.example.md``)
 are starter templates — never auto-picked. They exist for users to copy
 and adapt.
 
-## State vs output
+## Output, archive and state
 
 - **Output** (transcripts, summaries, generated agendas) goes into
   `vault_path` — it's content the user wants to keep and read.
+- **Archive** (raw data fetched from a source that may not hand it over again)
+  goes into `~/.<tool>/archive/` or a configurable `archive_dir` — it must be
+  kept, but nobody reads it directly.
 - **State** (caches, model weights, embeddings, raw audio) goes into
   `~/.<tool>/` or a configurable `state_dir` — it's safe to wipe.
 
 Never mix them.
+
+The test that separates archive from state is whether the data can be fetched
+again, not whether it is raw. Documents from a mailbox that keeps them for as
+long as the account exists are state. Health data behind a paid subscription or
+an unofficial API is archive: once the subscription lapses or the API changes,
+the local copy is the only one, and the vendor may never have kept full
+resolution in the first place.
+
+Archive files are written once and never modified. That is what lets them be
+backed up incrementally: the tool packs only what is new, encrypted, and uploads
+it under its own prefix in the backup remote. The daily backup of `~/Documents`
+builds a full archive every run and keeps many copies of it, so raw data placed
+there would be duplicated dozens of times across the backup levels.
