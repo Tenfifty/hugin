@@ -25,6 +25,7 @@ These live at the top level of `hugin.yaml` and may be relied on by any tool:
 | `journal_path` | path | Daily journal file inside the vault |
 | `gws_bin` | string | `gws` (Google Workspace CLI) binary on PATH |
 | `gws_config_dir` | path | Optional override for `gws`'s own config |
+| `archive_root` | path | Root of every tool's archive, default `~/.archive`. See "Output, archive and state" |
 
 A tool may **read** these from the merged config but must not require them
 to be present — pick sensible defaults when they're missing.
@@ -186,11 +187,13 @@ and adapt.
 
 - **Output** (transcripts, summaries, generated agendas) goes into
   `vault_path` — it's content the user wants to keep and read.
-- **Archive** (raw data fetched from a source that may not hand it over again)
-  goes into `~/.<tool>/archive/` or a configurable `archive_dir` — it must be
-  kept, but nobody reads it directly.
-- **State** (caches, model weights, embeddings, raw audio) goes into
-  `~/.<tool>/` or a configurable `state_dir` — it's safe to wipe.
+- **Archive** (raw data fetched from a source that may not hand it over again,
+  or recorded and never obtainable again) goes into `<archive_root>/<tool>/`,
+  by default `~/.archive/<tool>/` — it must be kept, but nobody reads it
+  directly.
+- **State** (caches, model weights, derived embeddings, work in progress) goes
+  into `~/.<tool>/` or a configurable `state_dir` — it's safe to wipe, with
+  the exception below.
 
 Never mix them.
 
@@ -202,7 +205,45 @@ the local copy is the only one, and the vendor may never have kept full
 resolution in the first place.
 
 Archive files are written once and never modified. That is what lets them be
-backed up incrementally: the tool packs only what is new, encrypted, and uploads
-it under its own prefix in the backup remote. The daily backup of `~/Documents`
-builds a full archive every run and keeps many copies of it, so raw data placed
-there would be duplicated dozens of times across the backup levels.
+backed up incrementally: only what is new has to be copied, and a file that
+changes after it was copied is an error, not an update. The daily backup of
+`~/Documents` builds a full archive every run and keeps many copies of it, so
+raw data placed there would be duplicated dozens of times across the backup
+levels.
+
+### The archive root
+
+All archives share one root, `archive_root` in `hugin.yaml` (default
+`~/.archive`), the way all config shares `~/.config`. The backup only needs to
+know that one directory; a tool never decides how its archive is backed up.
+
+```
+~/.archive/
+  <tool>/                       # one directory per tool, e.g. hugin-meetings/
+    <source>/...                # a tool with several sources splits further,
+                                # e.g. hugin-sources/garmin/
+  <name>/                       # data no tool owns, e.g. 23andme/
+```
+
+- A tool gets its directory from `SharedConfig.archive_dir("<tool>")`. It may
+  offer an override in its own config section (hugin-sources has
+  `sources.<source>.archive_dir`), but not as a top-level `archive_dir` key,
+  which would collide with the method. It never writes anywhere else under
+  the root.
+- Only finished files go in. Anything still being written (a recording in
+  progress, a download, a month that is not yet closed) lives in `state_dir`
+  and is moved into the archive when it is complete. Write to a temporary name
+  in the same directory and rename, so a half-written file never appears under
+  its final name. Name it `.<name>.tmp`, a pattern the backup must skip. The
+  move from `state_dir` is a rename too, so `archive_root` and the tools'
+  `state_dir`s must be on the same filesystem. A failed move is logged and the
+  file stays in `state_dir`, never copied half-way.
+- Nothing in the archive is rewritten. A tool that needs to correct something
+  writes a new file beside it.
+- Mutable state that is expensive to rebuild (enrolled speaker profiles, OAuth
+  tokens) is **not** archive, however valuable, because it changes. It stays
+  in `state_dir`, which makes it the one part of `state_dir` that is not safe
+  to wipe. How it is backed up is not decided yet.
+- Data that no tool owns, such as a one-off export from a service, goes in a
+  directory of its own named after what it is. A project that analyses it
+  reaches it by symlink rather than keeping a copy.

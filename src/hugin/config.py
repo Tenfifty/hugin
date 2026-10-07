@@ -25,6 +25,10 @@ T = TypeVar("T")
 
 ARCHIVE_DIRNAME_BY_LANGUAGE = {"en": "archive", "sv": "arkiv"}
 
+# Root of every tool's write-once archive (CONVENTIONS.md, "The archive root").
+# Unrelated to ``archive_dirname``, which names the rotated-journal folder.
+DEFAULT_ARCHIVE_ROOT = Path.home() / ".archive"
+
 
 def config_dir() -> Path:
     """Resolve the active config directory, honouring ``HUGIN_CONFIG_DIR``."""
@@ -105,6 +109,7 @@ class SharedConfig:
     # Subdirectory name used for rotated archives next to the journal.
     # Defaults to "archive" for en / "arkiv" for sv when not set explicitly.
     archive_dirname: str = "archive"
+    archive_root: Path = DEFAULT_ARCHIVE_ROOT
 
     # The full merged config dict, for anything not explicitly modeled.
     raw: dict[str, Any] = field(default_factory=dict)
@@ -128,5 +133,11 @@ class SharedConfig:
                 "archive_dirname",
                 ARCHIVE_DIRNAME_BY_LANGUAGE.get(language, "archive"),
             ),
+            "archive_root": _opt_path(merged.get("archive_root"))
+            or DEFAULT_ARCHIVE_ROOT,
             "raw": merged,
         }
+
+    def archive_dir(self, tool: str) -> Path:
+        """The tool's own directory under ``archive_root``."""
+        return self.archive_root / tool

@@ -88,6 +88,20 @@ class SharedConfigTests(unittest.TestCase):
         kw = SharedConfig.fields_from_merged({"language": "fr"})
         self.assertEqual(kw["archive_dirname"], "archive")
 
+    def test_archive_root_defaults_to_dot_archive(self) -> None:
+        cfg = SharedConfig(**SharedConfig.fields_from_merged({}))
+        self.assertEqual(cfg.archive_root, Path.home() / ".archive")
+        self.assertEqual(
+            cfg.archive_dir("hugin-meetings"),
+            Path.home() / ".archive" / "hugin-meetings",
+        )
+
+    def test_archive_root_explicit(self) -> None:
+        cfg = SharedConfig(
+            **SharedConfig.fields_from_merged({"archive_root": "/mnt/arkiv"})
+        )
+        self.assertEqual(cfg.archive_dir("x"), Path("/mnt/arkiv/x"))
+
     def test_paths_are_expanded_and_typed(self) -> None:
         kw = SharedConfig.fields_from_merged(
             {"vault_path": str(Path.home() / "v"), "journal_path": "/abs/j.md"}
