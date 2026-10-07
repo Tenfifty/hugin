@@ -195,8 +195,7 @@ and adapt.
   by default `~/.archive/<tool>/` — it must be kept, but nobody reads it
   directly.
 - **State** (caches, model weights, derived embeddings, work in progress) goes
-  into `~/.<tool>/` or a configurable `state_dir` — it's safe to wipe, with
-  the exception below.
+  into `~/.<tool>/` or a configurable `state_dir` — it's safe to wipe.
 
 Never mix them.
 
@@ -243,10 +242,14 @@ know that one directory; a tool never decides how its archive is backed up.
   file stays in `state_dir`, never copied half-way.
 - Nothing in the archive is rewritten. A tool that needs to correct something
   writes a new file beside it.
-- Mutable state that is expensive to rebuild (enrolled speaker profiles, OAuth
-  tokens) is **not** archive, however valuable, because it changes. It stays
-  in `state_dir`, which makes it the one part of `state_dir` that is not safe
-  to wipe. How it is backed up is not decided yet.
+- Mutable state that is expensive to rebuild is not archive, because it
+  changes, and it must not be the one thing in `state_dir` that is unsafe to
+  wipe. Record the decisions behind it as write-once events in the archive and
+  make the state a cache folded from them. hugin-meetings does this for
+  enrolled speakers: `enrollments/` holds which segments of which recording
+  belong to whom, and `speakers/` is rebuilt from it, so a new embedding model
+  re-enrolls everyone automatically. A correction is a new event, never an
+  edit. OAuth tokens need none of this; logging in again recreates them.
 - Data that no tool owns, such as a one-off export from a service, goes in a
   directory of its own named after what it is. A project that analyses it
   reaches it by symlink rather than keeping a copy.
