@@ -185,6 +185,9 @@ and adapt.
 
 ## Output, archive and state
 
+- **Rendered artifacts** (PDFs, decks, images, exports a tool generates for
+  sending or viewing) go into `~/out/<subject>/`, never the vault, which holds
+  text only. They are regenerable, so they are not backed up.
 - **Output** (transcripts, summaries, generated agendas) goes into
   `vault_path` — it's content the user wants to keep and read.
 - **Archive** (raw data fetched from a source that may not hand it over again,
