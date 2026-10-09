@@ -251,5 +251,13 @@ know that one directory; a tool never decides how its archive is backed up.
   re-enrolls everyone automatically. A correction is a new event, never an
   edit. OAuth tokens need none of this; logging in again recreates them.
 - Data that no tool owns, such as a one-off export from a service, goes in a
-  directory of its own named after what it is. A project that analyses it
-  reaches it by symlink rather than keeping a copy.
+  directory of its own named after what it is (`deklaration/`,
+  `profilbilder/`, `hus/`). A project that analyses it reaches it by symlink
+  rather than keeping a copy. A tool that only files such data, like
+  hugin-downloads, is the one exception to "never anywhere else under the
+  root": it moves files into the subject directories its config names, under
+  the same rules (whole files, by rename, never replacing one).
+- Originals that are not text, such as signed PDFs, scans and photos, belong
+  here and not in `~/Documents`, even when nothing else touches them.
+  `~/Documents` is packed whole every day and kept in many copies, so 60 MB
+  of PDFs and photos there doubled every daily backup (2026-10-08).
